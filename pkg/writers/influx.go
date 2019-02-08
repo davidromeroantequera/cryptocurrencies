@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	highWaterMark = 10
+	highWaterMark = 100
 )
 
 type Ticker = types.Ticker
@@ -36,26 +36,41 @@ func NewInfluxWriter(dbName string, measurement string) InfluxWriter {
 	return w
 }
 
-func (w InfluxWriter) TickerToInfluxWriter() chan<- Ticker {
+func (w InfluxWriter) flushToDatabase(points []*client.Point) {
+	bp, err := client.NewBatchPoints(client.BatchPointsConfig{
+		Database:  w.db,
+		Precision: "s",
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	bp.AddPoints(points)
+
+	if err := w.c.Write(bp); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func (w InfluxWriter) TickerToInfluxWriter() (chan<- Ticker, types.StopChannel) {
 	input := make(chan Ticker)
+	stop:= make(types.StopChannel)
+
 	tags := w.Tags
 
 	go func() {
-		bp, err := client.NewBatchPoints(client.BatchPointsConfig{
-			Database:  w.db,
-			Precision: "s",
-		})
-		if err != nil {
-			log.Fatal(err)
-		}
-
 		count := 0
 
-		for {
-			t := <-input
+		points := []*client.Point{}
 
-			if err != nil {
-				log.Fatal(err)
+		for {
+			var t types.Ticker
+			select {
+				case t = <-input:
+					break
+				case <-stop:
+					w.flushToDatabase(points)
+					return
 			}
 
 			fields := map[string]interface{}{
@@ -70,29 +85,20 @@ func (w InfluxWriter) TickerToInfluxWriter() chan<- Ticker {
 
 			pt, err := client.NewPoint(w.measurement, tags, fields, t.Timestamp)
 			if err != nil {
-				log.Fatal(err)
+				log.Printf("TickerToInfluxWriter: %v\n", err)
+				continue
 			}
-			bp.AddPoint(pt)
+			points = append(points, pt)
 
 			count++
 
 			if count > highWaterMark {
-				if err := w.c.Write(bp); err != nil {
-					log.Fatal(err)
-				}
-
-				bp, err = client.NewBatchPoints(client.BatchPointsConfig{
-					Database:  w.db,
-					Precision: "s",
-				})
-				if err != nil {
-					log.Fatal(err)
-				}
-
+				w.flushToDatabase(points)
+				points = []*client.Point{}
 				count = 0
 			}
 		}
 	}()
 
-	return input
+	return input, stop
 }

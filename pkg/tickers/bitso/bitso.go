@@ -99,8 +99,10 @@ func bitsoTickerToTicker(bt bitsoTicker) (Ticker, error) {
 	return t, nil
 }
 
-func NewBitsoTicker() tickers.TickerChan {
+func NewBitsoTicker() (tickers.TickerChan, types.StopChannel) {
 	input := make(tickers.TickerChan)
+	stop := make(types.StopChannel)
+
 	go func() {
 		for {
 			time.Sleep(1000 * time.Millisecond)
@@ -118,9 +120,16 @@ func NewBitsoTicker() tickers.TickerChan {
 				continue
 			}
 
-			input <- ticker
+			select {
+			case input <- ticker:
+				break;
+			case <-stop:
+				return
+			}
+
 		}
 	}()
-	return input
+
+	return input, stop
 }
 

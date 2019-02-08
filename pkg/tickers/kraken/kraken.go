@@ -10,7 +10,7 @@ import (
 	"cryptocurrencies/pkg/tickers"
 )
 
-const sleep_time = 1000
+const sleepTime = 1000
 
 type krakenTicker struct {
 	Error []interface{}
@@ -99,27 +99,34 @@ func translateTicker(data krakenTicker) (types.Ticker, error) {
 	return t, nil
 }
 
-func NewKrakenTicker() tickers.TickerChan {
+func NewKrakenTicker() (tickers.TickerChan, types.StopChannel) {
 	input := make(tickers.TickerChan)
+	stop := make(types.StopChannel)
+
 	go func() {
 		for {
-			time.Sleep(sleep_time * time.Millisecond)
+			time.Sleep(sleepTime * time.Millisecond)
 			bt, err := retreiveAndUnmarshallTicker()
 			if err != nil {
 				log.Fatal(err)
-				time.Sleep(sleep_time * time.Millisecond)
+				time.Sleep(sleepTime * time.Millisecond)
 				continue
 			}
 
 			ticker, err := translateTicker(bt)
 			if err != nil {
 				log.Fatal(err)
-				time.Sleep(sleep_time * time.Millisecond)
+				time.Sleep(sleepTime * time.Millisecond)
 				continue
 			}
 
-			input <- ticker
+			select {
+			case input <- ticker:
+				break
+			case <-stop:
+				return
+			}
 		}
 	}()
-	return input
+	return input, stop
 }
